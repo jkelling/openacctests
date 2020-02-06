@@ -1,0 +1,2 @@
+add_executable(collectiveShared collectiveShared.cpp)
+target_link_libraries(collectiveShared)
