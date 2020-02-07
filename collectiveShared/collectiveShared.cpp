@@ -5,6 +5,25 @@
 void sync() {} // dummy sync call
 #pragma acc routine(sync) bind("__syncthreads")
 
+inline void funct(unsigned int nGangs, unsigned int nWorkers, int g, int w, int i, int* cache, int* io)
+{
+	// printf("%lld %lld ( %lld )\n",g,w, (int)nWorkers);
+	/* data-parallel */
+	io[g*nWorkers+w] += w+1;
+
+	/* collective load/store */
+	// load a pseudo-random number of times to threads out of sync and thusly provoke race conditions
+	for(int r = 0; r < ((unsigned int)((w+i*nWorkers)*nGangs+g)*1103515245u)/(double)UINT_MAX*13+1; ++r)
+		cache[w] = io[(nGangs+g)*nWorkers+w];
+	sync();
+	cache[(w+3)%nWorkers] += (w+3)%nWorkers+1;
+	// cache[(w+3)%nWorkers] += w+1;
+	// printf("%lld %lld : %lld\n",g,w, cache[(w+3)%nWorkers]);
+	// printf("");
+	sync();
+	io[(nGangs+g)*nWorkers+w] = cache[w];
+}
+
 int main()
 {
 	constexpr size_t nGangs = 10;
@@ -30,6 +49,9 @@ int main()
 			// #pragma acc loop vector
 			for(int w = 0; w < nWorkers; ++w)
 			{
+#if 1
+				funct(nGangs, nWorkers, g, w, i, cache, io);
+#else
 				// printf("%lld %lld ( %lld )\n",g,w, (int)nWorkers);
 				/* data-parallel */
 				io[g*nWorkers+w] += w+1;
@@ -45,6 +67,7 @@ int main()
 				// printf("");
 				sync();
 				io[(nGangs+g)*nWorkers+w] = cache[w];
+#endif
 			}
 		}
 	}
