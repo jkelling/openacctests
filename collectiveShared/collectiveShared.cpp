@@ -5,9 +5,8 @@
 void sync() {} // dummy sync call
 #pragma acc routine(sync) bind("__syncthreads")
 
-inline void funct(unsigned int nGangs, unsigned int nWorkers, int g, int w, int i, int* cache, int* io)
+inline void funct(size_t nGangs, size_t nWorkers, size_t g, size_t w, size_t i, int* cache, int* io)
 {
-	// printf("%lld %lld ( %lld )\n",g,w, (int)nWorkers);
 	/* data-parallel */
 	io[g*nWorkers+w] += w+1;
 
@@ -16,9 +15,12 @@ inline void funct(unsigned int nGangs, unsigned int nWorkers, int g, int w, int 
 	for(int r = 0; r < ((unsigned int)((w+i*nWorkers)*nGangs+g)*1103515245u)/(double)UINT_MAX*13+1; ++r)
 		cache[w] = io[(nGangs+g)*nWorkers+w];
 	sync();
+	// if(w < 10)
+	// 	printf("func: %lld %lld ( %lld ): %lld\n",g,w, nWorkers, (size_t)cache[(w+3)%nWorkers]);
 	cache[(w+3)%nWorkers] += (w+3)%nWorkers+1;
 	// cache[(w+3)%nWorkers] += w+1;
-	// printf("%lld %lld : %lld\n",g,w, cache[(w+3)%nWorkers]);
+	// if(w < 10)
+	// 	printf("func: %lld %lld : %lld\n",g,w, (size_t)cache[(w+3)%nWorkers]);
 	// printf("");
 	sync();
 	io[(nGangs+g)*nWorkers+w] = cache[w];
@@ -26,8 +28,8 @@ inline void funct(unsigned int nGangs, unsigned int nWorkers, int g, int w, int 
 
 int main()
 {
-	constexpr size_t nGangs = 10;
-	constexpr size_t nWorkers = 512;
+	constexpr size_t nGangs = 2;
+	constexpr size_t nWorkers = 1024;
 
 	constexpr size_t N = 2*nGangs*nWorkers;
 	int io[N];
@@ -35,21 +37,23 @@ int main()
 		io[a] = 1000000000;
 
 	#pragma acc data copy(io)
-	for (int i = 0; i < 1000; ++i)
+	for (int i = 0; i < 1; ++i)
 	{
 	#pragma acc parallel num_gangs(nGangs) num_workers(nWorkers)
 	// #pragma acc parallel num_gangs(nGangs) vector_length(nWorkers)
 	{
 		#pragma acc loop gang
-		for(int g = 0; g < nGangs; ++g)
+		for(size_t g = 0; g < nGangs; ++g)
 		{
 			int cache[nWorkers];
 			// printf("%lld _ ( %lld )\n",g,nWorkers);
 			#pragma acc loop worker
 			// #pragma acc loop vector
-			for(int w = 0; w < nWorkers; ++w)
+			for(size_t w = 0; w < nWorkers; ++w)
 			{
 #if 1
+				// if(w < 10)
+				// 	printf("%lld %lld ( %lld )\n",g,w, nWorkers);
 				funct(nGangs, nWorkers, g, w, i, cache, io);
 #else
 				// printf("%lld %lld ( %lld )\n",g,w, (int)nWorkers);
@@ -77,6 +81,7 @@ int main()
 	for(int g = 0; g < nGangs; ++g)
 	{
 		for(int w = 0; w < nWorkers; ++w)
+		// for(int w = 0; w < 10; ++w)
 		{
 			printf("g_%d\tw_%d:\t%d\n", g,w,io[(a*nGangs+g)*nWorkers+w]);
 		}
@@ -86,6 +91,7 @@ int main()
 	for(int g = 0; g < nGangs; ++g)
 	{
 		for(int w = 0; w < nWorkers; ++w)
+		// for(int w = 0; w < 10; ++w)
 		{
 			fprintf(stderr, "g_%d\tw_%d:\t%d\n", g,w,io[(a*nGangs+g)*nWorkers+w]);
 		}
