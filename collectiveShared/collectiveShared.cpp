@@ -1,10 +1,9 @@
-#include <cstdio>
 #include <iostream>
 #include <vector>
-#include <cuda_runtime.h>
+#include <climits>
 
-#pragma acc routine bind("__syncthreads")
-__device__ extern "C" void __syncthreads();
+void sync() {} // dummy sync call
+#pragma acc routine(sync) bind("__syncthreads")
 
 int main()
 {
@@ -16,12 +15,12 @@ int main()
 	for(int a = 0; a < N; ++a)
 		io[a] = 1000000000;
 
-	for (int i = 0; i < 100; ++i)
+	#pragma acc data copy(io)
+	for (int i = 0; i < 1000; ++i)
 	{
-	#pragma acc parallel num_gangs(nGangs) num_workers(nWorkers) copy(io)
-	// #pragma acc parallel num_gangs(nGangs) vector_length(nWorkers) copy(io)
+	#pragma acc parallel num_gangs(nGangs) num_workers(nWorkers)
+	// #pragma acc parallel num_gangs(nGangs) vector_length(nWorkers)
 	{
-		// #pragma acc declare __syncthreads
 		#pragma acc loop gang
 		for(int g = 0; g < nGangs; ++g)
 		{
@@ -39,12 +38,12 @@ int main()
 				// load a pseudo-random number of times to threads out of sync and thusly provoke race conditions
 				for(int r = 0; r < ((unsigned int)((w+i*nWorkers)*nGangs+g)*1103515245u)/(double)UINT_MAX*13+1; ++r)
 					cache[w] = io[(nGangs+g)*nWorkers+w];
-				// __syncthreads();
+				sync();
 				cache[(w+3)%nWorkers] += (w+3)%nWorkers+1;
 				// cache[(w+3)%nWorkers] += w+1;
 				// printf("%lld %lld : %lld\n",g,w, cache[(w+3)%nWorkers]);
 				// printf("");
-				// __syncthreads();
+				sync();
 				io[(nGangs+g)*nWorkers+w] = cache[w];
 			}
 		}
