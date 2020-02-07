@@ -6,3 +6,4 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_BUILD_TYPE Debug)
 
 add_subdirectory(collectiveShared)
+add_subdirectory(hostClass)
