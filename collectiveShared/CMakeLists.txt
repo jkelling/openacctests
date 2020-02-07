@@ -1,2 +1,5 @@
 add_executable(collectiveShared collectiveShared.cpp)
 target_link_libraries(collectiveShared)
+
+add_executable(collectiveSharedMiniAlpaka collectiveSharedMiniAlpaka.cpp)
+target_link_libraries(collectiveSharedMiniAlpaka)
