@@ -3,7 +3,9 @@
 template<typename F>
 void fct(F f)
 {
+#ifdef DO_CALL
 	printf("%d\n", f());
+#endif
 }
 
 template<typename ...A>
