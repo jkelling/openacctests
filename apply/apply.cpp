@@ -45,6 +45,15 @@ namespace std
 template<typename ...A>
 int tupleTest(std::tuple<A...> t) {return std::get<0>(t);}
 
+template<typename ...A>
+struct NoLambda
+{
+	void operator() (A ...a) const {}
+};
+
+template<typename ...A>
+void noLambda(A ...a) {}
+
 constexpr size_t nGangs = 2;
 constexpr size_t nWorkers = 2;
 
@@ -70,6 +79,12 @@ void f(Args ...args)
 					}
 					, targs);
 					// );
+#elif defined(DO_APPLY_FUNC_OBJ)
+				std::apply(noLambda<Args...>
+					, targs);
+#elif defined(DO_APPLY_FUNCTOR)
+				std::apply(NoLambda<int, int>()
+					, targs);
 #elif defined(DO_GET)
 				printf("%d\n", std::get<0>(targs)+std::get<1>(targs));
 				// [](auto ...args){}(std::get<0>(targs),std::get<1>(targs));

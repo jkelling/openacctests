@@ -1,7 +1,21 @@
 #include <iostream>
 
 template<typename F>
-void fct(F f) {}
+void fct(F f)
+{
+	printf("%d\n", f());
+}
+
+template<typename ...A>
+struct NoLambda
+{
+	int operator() (A ...a) const {return 5;}
+};
+
+struct NoLambdaNoT
+{
+	int operator() () const {return 3;}
+};
 
 constexpr size_t nGangs = 2;
 constexpr size_t nWorkers = 2;
@@ -19,7 +33,12 @@ int main()
 			// #pragma acc loop vector
 			for(int w = 0; w < nWorkers; ++w)
 			{
-				fct([](){});
+#if defined(DO_APPLY_FUNCTOR)
+				// fct(NoLambda<>());
+				fct(NoLambdaNoT());
+#else
+				fct([](){return 42;});
+#endif
 			}
 		}
 	}
