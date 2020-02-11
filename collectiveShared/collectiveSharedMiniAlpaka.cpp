@@ -3,9 +3,16 @@
 #include <climits>
 #include <cassert>
 
-// #define USE_TUPLE
+#define USE_TUPLE
 #ifdef USE_TUPLE
 #include <tuple>
+#endif
+#if __cplusplus < 201703L
+#include <meta.h>
+namespace std
+{
+	using ::meta::apply;
+}
 #endif
 
 template<typename Shared>
@@ -36,7 +43,6 @@ template<typename Shared>
 struct AccOpenACC : public AccGeneric<Shared>
 {
 	using AccGeneric<Shared>::AccGeneric;
-#pragma acc routine
 	void __syncthreads() const {syncOpenACC();}
 };
 
@@ -44,9 +50,9 @@ template<typename Funct, typename ...Args>
 void execKernelOpenACC(Funct funct, unsigned int nGangs, unsigned int nWorkers, Args ...args)
 {
 #ifdef USE_TUPLE
-	std::tuple<Args...> targs(args...);
+	auto targs = std::make_tuple(args...);
 #endif
-	#pragma acc parallel num_gangs(nGangs) num_workers(nWorkers) //copyin(args)
+	#pragma acc parallel num_gangs(nGangs) num_workers(nWorkers)
 	{
 		#pragma acc loop gang
 		for(int g = 0; g < nGangs; ++g)
@@ -60,7 +66,7 @@ void execKernelOpenACC(Funct funct, unsigned int nGangs, unsigned int nWorkers, 
 				auto wacc = acc;
 				wacc.w = w;
 #ifdef USE_TUPLE
-				std::apply([wacc, funct](auto ...args)
+				std::apply([funct, wacc](auto ...args)
 					{
 						funct(wacc, args...);
 					}, targs);
@@ -121,9 +127,10 @@ struct Funct
 		int cache[MaxWorkers];
 	};
 
+#if 1
 	template<typename Acc>
 	DEV_FUNCT
-	void operator() (const Acc& acc, int* io, int i) const
+	void operator() (Acc& acc, int* io, int i) const
 	{
 		auto& nGangs = acc.nGangs;
 		auto& nWorkers = acc.nWorkers;
@@ -148,6 +155,7 @@ struct Funct
 		acc.__syncthreads();
 		io[(nGangs+g)*nWorkers+w] = cache[w];
 	}
+#endif
 };
 
 
