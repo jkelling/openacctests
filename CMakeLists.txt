@@ -9,3 +9,4 @@ include_directories(include/)
 
 add_subdirectory(collectiveShared)
 add_subdirectory(hostClass)
+add_subdirectory(apply)
