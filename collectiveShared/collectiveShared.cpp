@@ -2,6 +2,7 @@
 #include <vector>
 #include <climits>
 
+__attribute__((noinline))
 void sync() {} // dummy sync call
 #pragma acc routine(sync) bind("__syncthreads")
 
@@ -51,7 +52,7 @@ int main()
 			// #pragma acc loop vector
 			for(size_t w = 0; w < nWorkers; ++w)
 			{
-#if 1
+#ifndef USE_INLINE
 				// if(w < 10)
 				// 	printf("%lld %lld ( %lld )\n",g,w, nWorkers);
 				funct(nGangs, nWorkers, g, w, i, cache, io);
