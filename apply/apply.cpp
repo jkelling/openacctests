@@ -5,9 +5,45 @@
 #include "meta.h"
 namespace std
 {
+#ifdef USE_MANUAL_APPLY
+	template<typename F>
+	auto apply(F f)
+	{
+		return f();
+	}
+
+	template<typename F,
+		typename A0>
+	auto apply(F f, std::tuple<A0> &t)
+	{
+		return f(std::get<0>(t));
+	}
+
+	template<typename F,
+		typename A0, typename A1>
+	auto apply(F f, std::tuple<A0,A1> &t)
+	{
+		return f(std::get<0>(t), std::get<1>(t));
+	}
+#elif defined(USE_DUMMY_APPLY)
+	template<typename F>
+	auto apply(F f, std::tuple<int, int> a)
+	{
+	}
+#elif defined(USE_DUMMY2_APPLY)
+	template<typename F,
+		typename ...A>
+	auto apply(F f, std::tuple<A...> a)
+	{
+	}
+#else
 	using ::meta::apply;
+#endif
 }
 #endif
+
+template<typename ...A>
+int tupleTest(std::tuple<A...> t) {return std::get<0>(t);}
 
 constexpr size_t nGangs = 2;
 constexpr size_t nWorkers = 2;
@@ -27,10 +63,19 @@ void f(Args ...args)
 			// #pragma acc loop vector
 			for(int w = 0; w < nWorkers; ++w)
 			{
+#ifdef DO_APPLY
 				std::apply([](auto ...args)
+				// std::apply([]()
 					{
 					}
 					, targs);
+					// );
+#elif defined(DO_GET)
+				printf("%d\n", std::get<0>(targs)+std::get<1>(targs));
+				// [](auto ...args){}(std::get<0>(targs),std::get<1>(targs));
+#elif defined(DO_TUPLE_TEST)
+				printf("%d\n", tupleTest(targs));
+#endif
 			}
 		}
 	}
