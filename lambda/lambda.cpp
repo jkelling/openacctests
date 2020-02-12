@@ -1,7 +1,7 @@
 #include <iostream>
 
 template<typename F>
-void fct(F f)
+void fct(F &&f)
 {
 #ifdef DO_CALL
 	printf("%d\n", f());
