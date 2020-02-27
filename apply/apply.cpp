@@ -6,29 +6,12 @@
 namespace std
 {
 #ifdef USE_MANUAL_APPLY
-	template<typename F>
-	auto apply(F &&f)
-	{
-		return f();
-	}
-
-	template<typename F,
-		typename A0>
-	auto apply(F &&f, std::tuple<A0> &t)
-	{
-		return f(std::get<0>(t));
-	}
-
-	template<typename F,
-		typename A0, typename A1>
-	auto apply(F &&f, std::tuple<A0,A1> &t)
-	{
-		return f(std::get<0>(t), std::get<1>(t));
-	}
+	#include "apply.h"
 #elif defined(USE_DUMMY_APPLY)
 	template<typename F>
-	auto apply(F &&f, std::tuple<int, int> a)
+	auto apply(const F &f, std::tuple<int, int> a)
 	{
+		printf("USE_DUMMY_APPLY\n");
 	}
 #elif defined(USE_DUMMY2_APPLY)
 	template<typename F,

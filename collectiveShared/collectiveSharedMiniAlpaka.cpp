@@ -7,12 +7,17 @@
 #ifdef USE_TUPLE
 #include <tuple>
 #endif
+
+#ifdef USE_MANUAL_APPLY
+	#include "apply.h"
+#else
 #if __cplusplus < 201703L
 #include <meta.h>
 namespace std
 {
 	using ::meta::apply;
 }
+#endif
 #endif
 
 template<typename Shared>
@@ -21,18 +26,23 @@ struct AccGeneric
 	unsigned int nGangs, nWorkers;
 	unsigned int g, w;
 
-	Shared& shared;
+	Shared shared;
 
 		AccGeneric(unsigned int nGangs, unsigned int nWorkers
-				, unsigned int g, unsigned int w,
-				Shared& shared)
-		: nGangs(nGangs), nWorkers(nWorkers), g(g), w(w), shared(shared)
+				, unsigned int g, unsigned int w)
+		: nGangs(nGangs), nWorkers(nWorkers), g(g), w(w)
 	{}
 
 	void __syncthreads() const {}
 };
 
 #ifdef _OPENACC
+
+template<typename F, typename ...Args>
+void invokeKernel(F&& f, Args &&...args)
+{
+	f(std::forward(args)...);
+}
 
 #include <openacc.h>
 
@@ -46,11 +56,29 @@ struct AccOpenACC : public AccGeneric<Shared>
 	void __syncthreads() const {syncOpenACC();}
 };
 
+struct AccOpenACCNoT
+{
+	unsigned int nGangs, nWorkers;
+	unsigned int g, w;
+
+	void* shared;
+
+		AccOpenACCNoT(unsigned int nGangs, unsigned int nWorkers
+				, unsigned int g, unsigned int w, void* shared)
+		: nGangs(nGangs), nWorkers(nWorkers), g(g), w(w)
+	{}
+	void __syncthreads() const {syncOpenACC();}
+};
+
 template<typename Funct, typename ...Args>
-void execKernelOpenACC(Funct funct, unsigned int nGangs, unsigned int nWorkers, Args ...args)
+void execKernelOpenACC(Funct &&funct, unsigned int nGangs, unsigned int nWorkers, Args ...args)
 {
 #ifdef USE_TUPLE
+#if defined(DO_APPLY_FUNC_OBJ)
 	auto targs = std::make_tuple(args...);
+#else
+	auto targs = std::make_tuple(funct, args...);
+#endif
 #endif
 	#pragma acc parallel num_gangs(nGangs) num_workers(nWorkers)
 	{
@@ -58,7 +86,8 @@ void execKernelOpenACC(Funct funct, unsigned int nGangs, unsigned int nWorkers, 
 		for(int g = 0; g < nGangs; ++g)
 		{
 			typename Funct::Shared shared;
-			AccOpenACC<typename Funct::Shared> acc = {nGangs, nWorkers, g, 0, shared};
+			// AccOpenACC<typename Funct::Shared> acc(nGangs, nWorkers, g, 0);
+			AccOpenACCNoT acc(nGangs, nWorkers, g, 0, &shared);
 			// printf("%lld _ ( %lld )\n",g,nWorkers);
 			#pragma acc loop worker
 			for(int w = 0; w < nWorkers; ++w)
@@ -66,10 +95,19 @@ void execKernelOpenACC(Funct funct, unsigned int nGangs, unsigned int nWorkers, 
 				auto wacc = acc;
 				wacc.w = w;
 #ifdef USE_TUPLE
-				std::apply([funct, wacc](auto ...args)
+#if defined(DO_APPLY_FUNC_OBJ)
+				auto tup = std::make_tuple(funct, wacc);
+				// auto tup = std::tuple_cat(std::make_tuple(funct, wacc), targs);
+				// std::apply(invokeKernel<Funct, AccOpenACC<typename Funct::Shared>, Args...>
+				// 	, std::tuple_cat(std::make_tuple(funct, wacc), targs));
+#else
+				std::apply([wacc](auto &&funct, auto &&...args)
+				// std::apply([](auto &&funct, auto &&...args)
+				// std::apply([](const Funct &funct, int* io, int i)
 					{
 						funct(wacc, args...);
 					}, targs);
+#endif
 #else
 				funct(wacc, std::forward<Args>(args)...);
 #endif
@@ -85,8 +123,8 @@ void exec(Args ...args)
 	execKernelOpenACC(std::forward<Args>(args)...);
 }
 
-constexpr unsigned int N_GANGS = 10;
-constexpr unsigned int N_WORKERS = 512;
+constexpr unsigned int N_GANGS = 2;
+constexpr unsigned int N_WORKERS = 32;
 
 // #define DEV_FUNCT _Pragma ("acc routine") \ // does not work
 // 	inline
@@ -122,6 +160,7 @@ constexpr unsigned int N_WORKERS = 1;
 template<int MaxWorkers = 512, typename T = int>
 struct Funct
 {
+	int a = 0;
 	struct Shared
 	{
 		int cache[MaxWorkers];
@@ -137,7 +176,7 @@ struct Funct
 		assert(nWorkers <= MaxWorkers);
 		auto& g = acc.g;
 		auto& w = acc.w;
-		auto& cache = acc.shared.cache;
+		auto& cache = reinterpret_cast<Shared*>(acc.shared)->cache;
 
 		// printf("%lld %lld ( %lld )\n",g,w, (int)nWorkers);
 		/* data-parallel */
@@ -171,7 +210,7 @@ int main()
 
 #ifdef _OPENACC // leaving out abstract memory management here
 	#pragma acc data copy(io)
-	for (int i = 0; i < 1000; ++i)
+	for (int i = 0; i < 1; ++i)
 	{
 		exec(Funct<>(), nGangs, nWorkers, (int*)acc_deviceptr(io), i);
 	}
