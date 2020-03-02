@@ -2,9 +2,18 @@
 #include <vector>
 #include <climits>
 
+// #define USE_INLINE
+
 __attribute__((noinline))
 void sync() {} // dummy sync call
+
+constexpr unsigned int N_GANGS = 2;
+#ifdef __PGIC__
 #pragma acc routine(sync) bind("__syncthreads")
+constexpr unsigned int N_WORKERS = 1024;
+#else
+constexpr unsigned int N_WORKERS = 1;
+#endif
 
 struct Shared
 {
@@ -42,8 +51,8 @@ inline void funct(size_t nGangs, size_t nWorkers, size_t g, size_t w, size_t i, 
 
 int main()
 {
-	constexpr size_t nGangs = 2;
-	constexpr size_t nWorkers = 1024;
+	constexpr size_t nGangs = N_GANGS;
+	constexpr size_t nWorkers = N_WORKERS;
 
 	constexpr size_t N = 2*nGangs*nWorkers;
 	int io[N];
