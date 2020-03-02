@@ -26,11 +26,11 @@ struct AccGeneric
 	unsigned int nGangs, nWorkers;
 	unsigned int g, w;
 
-	Shared shared;
+	Shared &shared;
 
 		AccGeneric(unsigned int nGangs, unsigned int nWorkers
-				, unsigned int g, unsigned int w)
-		: nGangs(nGangs), nWorkers(nWorkers), g(g), w(w)
+				, unsigned int g, unsigned int w, Shared shared)
+		: nGangs(nGangs), nWorkers(nWorkers), g(g), w(w), shared(shared)
 	{}
 
 	void __syncthreads() const {}
@@ -46,8 +46,16 @@ void invokeKernel(F&& f, Args &&...args)
 
 #include <openacc.h>
 
+constexpr unsigned int N_GANGS = 2;
+__attribute__((noinline))
 void syncOpenACC() {} // dummy sync call
+
+#ifdef __PGIC__
 #pragma acc routine(syncOpenACC) bind("__syncthreads")
+constexpr unsigned int N_WORKERS = 128;
+#else
+constexpr unsigned int N_WORKERS = 1;
+#endif
 
 template<typename Shared>
 struct AccOpenACC : public AccGeneric<Shared>
@@ -70,24 +78,40 @@ struct AccOpenACCNoT
 	void __syncthreads() const {syncOpenACC();}
 };
 
+// template<typename Acc, typename Funct, typename ...Args>
+// void execKernelOpenACCInner(Funct &&funct, unsigned int nGangs, unsigned int nWorkers, const std::tuple<Args...>& targs);
+template<typename Acc, typename Funct, typename Tuple>
+void execKernelOpenACCInner(Funct &&funct, unsigned int nGangs, unsigned int nWorkers, const Tuple& targs);
+
 template<typename Funct, typename ...Args>
 void execKernelOpenACC(Funct &&funct, unsigned int nGangs, unsigned int nWorkers, Args ...args)
 {
 #ifdef USE_TUPLE
 #if defined(DO_APPLY_FUNC_OBJ)
 	auto targs = std::make_tuple(args...);
-#else
+#elif defined(INCLUDE_FUNCT_IN_TUPLE)
 	auto targs = std::make_tuple(funct, args...);
+#else
+	auto targs = std::make_tuple(args...);
 #endif
 #endif
+	execKernelOpenACCInner<AccOpenACC<typename Funct::Shared>>(funct, nGangs, nWorkers, targs);
+}
+
+template<typename Acc, typename Funct, typename Tuple>
+void execKernelOpenACCInner(Funct &&funct, unsigned int pnGangs, unsigned int pnWorkers, const Tuple& targs)
+{
+	const auto dtargs = targs;
+	const auto nGangs = pnGangs;
+	const auto nWorkers = pnWorkers;
 	#pragma acc parallel num_gangs(nGangs) num_workers(nWorkers)
 	{
 		#pragma acc loop gang
-		for(int g = 0; g < nGangs; ++g)
+		for(unsigned int g = 0; g < nGangs; ++g)
 		{
-			typename Funct::Shared shared;
+			typename std::decay<Funct>::type::Shared shared;
 			// AccOpenACC<typename Funct::Shared> acc(nGangs, nWorkers, g, 0);
-			AccOpenACCNoT acc(nGangs, nWorkers, g, 0, &shared);
+			Acc acc(nGangs, nWorkers, g, 0, shared);
 			// printf("%lld _ ( %lld )\n",g,nWorkers);
 			#pragma acc loop worker
 			for(int w = 0; w < nWorkers; ++w)
@@ -101,12 +125,13 @@ void execKernelOpenACC(Funct &&funct, unsigned int nGangs, unsigned int nWorkers
 				// std::apply(invokeKernel<Funct, AccOpenACC<typename Funct::Shared>, Args...>
 				// 	, std::tuple_cat(std::make_tuple(funct, wacc), targs));
 #else
-				std::apply([wacc](auto &&funct, auto &&...args)
+				std::apply([&wacc, funct](auto &&...args)
 				// std::apply([](auto &&funct, auto &&...args)
-				// std::apply([](const Funct &funct, int* io, int i)
+				// std::apply([&wacc, funct](int* io, int i)
 					{
 						funct(wacc, args...);
-					}, targs);
+						// funct(wacc, io, i);
+					}, dtargs);
 #endif
 #else
 				funct(wacc, std::forward<Args>(args)...);
@@ -123,19 +148,19 @@ void exec(Args ...args)
 	execKernelOpenACC(std::forward<Args>(args)...);
 }
 
-constexpr unsigned int N_GANGS = 2;
-constexpr unsigned int N_WORKERS = 32;
-
 // #define DEV_FUNCT _Pragma ("acc routine") \ // does not work
 // 	inline
 #define DEV_FUNCT inline
 
 #else
 
+constexpr unsigned int N_GANGS = 2;
+constexpr unsigned int N_WORKERS = 1;
+
 template<typename Funct, typename ...Args>
 void execKernelCPUseq(Funct funct, unsigned int nGangs, unsigned int nWorkers, Args ...args)
 {
-	for(int g = 0; g < nGangs; ++g)
+	for(unsigned int g = 0; g < nGangs; ++g)
 	{
 		typename Funct::Shared shared;
 		AccGeneric<typename Funct::Shared> acc = {nGangs, nWorkers, g, 0, shared};
@@ -150,20 +175,19 @@ void exec(Args ...args)
 	execKernelCPUseq(std::forward<Args>(args)...);
 }
 
-constexpr unsigned int N_GANGS = 10;
-constexpr unsigned int N_WORKERS = 1;
-
 #define DEV_FUNCT inline
 
 #endif
 
-template<int MaxWorkers = 512, typename T = int>
+template<int MaxWorkers = 256, typename T = int>
 struct Funct
 {
 	int a = 0;
 	struct Shared
 	{
 		int cache[MaxWorkers];
+
+			Shared() = default;
 	};
 
 #if 1
@@ -176,7 +200,7 @@ struct Funct
 		assert(nWorkers <= MaxWorkers);
 		auto& g = acc.g;
 		auto& w = acc.w;
-		auto& cache = reinterpret_cast<Shared*>(acc.shared)->cache;
+		auto& cache = acc.shared.cache;
 
 		// printf("%lld %lld ( %lld )\n",g,w, (int)nWorkers);
 		/* data-parallel */
