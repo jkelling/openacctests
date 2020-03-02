@@ -3,3 +3,6 @@ target_link_libraries(collectiveShared)
 
 add_executable(collectiveSharedMiniAlpaka collectiveSharedMiniAlpaka.cpp)
 target_link_libraries(collectiveSharedMiniAlpaka)
+
+add_executable(nestedType nestedType.cpp)
+target_link_libraries(nestedType)
