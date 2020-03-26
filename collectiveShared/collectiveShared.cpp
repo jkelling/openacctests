@@ -2,30 +2,70 @@
 #include <vector>
 #include <climits>
 
-// #define USE_INLINE
-
-__attribute__((noinline))
-void sync() {} // dummy sync call
+#define USE_INLINE
+// #define USE_ATOMIC_SYNC
 
 constexpr unsigned int N_GANGS = 2;
 #ifdef __PGIC__
-#pragma acc routine(sync) bind("__syncthreads")
+#ifdef USE_ATOMIC_SYNC
+struct Sync
+{
+	std::uint8_t m_generation = 0;
+	int m_syncCounter[2] {0,0};
+
+	void sync(int workerNum)
+	{
+		const auto generationEntered = m_generation&1;
+		int sum;
+		auto& cntr = m_syncCounter[generationEntered];
+		#pragma acc atomic capture
+			sum = ++cntr;
+		if(sum == workerNum)
+		{
+			++m_generation;
+			// op();
+		}
+		while(sum < workerNum)
+		{
+			#pragma acc atomic read
+			sum = m_syncCounter[generationEntered];
+		}
+		#pragma acc atomic update
+		--m_syncCounter[generationEntered&1];
+		while(sum > 0)
+		{
+			#pragma acc atomic read
+			sum = m_syncCounter[generationEntered];
+		}
+	}
+};
+#else
+__attribute__((noinline))
+void sync() {} // dummy sync call
+#endif
+// #pragma acc routine(sync) bind("__syncthreads")
 constexpr unsigned int N_WORKERS = 1024;
 #else
+#pragma acc routine
+void sync() {} // dummy sync call
 constexpr unsigned int N_WORKERS = 1;
 #endif
 
 struct Shared
 {
-	int cache[1024];
+	int cache[256];
 };
 
-#pragma acc routine
+// #pragma acc routine
 #ifdef VOIDPTR
 inline void funct(size_t nGangs, size_t nWorkers, size_t g, size_t w, size_t i, void* shared, int* io)
 #else
-inline void funct(size_t nGangs, size_t nWorkers, size_t g, size_t w, size_t i, int* cache, int* io)
+inline void funct(size_t nGangs, size_t nWorkers, size_t g, size_t w, size_t i, int* cache, int* io
 #endif
+#ifdef USE_ATOMIC_SYNC
+	, Sync& sync
+#endif
+	)
 {
 #ifdef VOIDPTR
 	auto& cache = reinterpret_cast<Shared*>(shared)->cache;
@@ -37,7 +77,11 @@ inline void funct(size_t nGangs, size_t nWorkers, size_t g, size_t w, size_t i, 
 	// load a pseudo-random number of times to threads out of sync and thusly provoke race conditions
 	for(int r = 0; r < ((unsigned int)((w+i*nWorkers)*nGangs+g)*1103515245u)/(double)UINT_MAX*13+1; ++r)
 		cache[w] = io[(nGangs+g)*nWorkers+w];
+#ifdef USE_ATOMIC_SYNC
+	sync.sync(nWorkers);
+#else
 	sync();
+#endif
 	// if(w < 10)
 	// 	printf("func: %lld %lld ( %lld ): %lld\n",g,w, nWorkers, (size_t)cache[(w+3)%nWorkers]);
 	cache[(w+3)%nWorkers] += (w+3)%nWorkers+1;
@@ -45,7 +89,11 @@ inline void funct(size_t nGangs, size_t nWorkers, size_t g, size_t w, size_t i, 
 	// if(w < 10)
 	// 	printf("func: %lld %lld : %lld\n",g,w, (size_t)cache[(w+3)%nWorkers]);
 	// printf("");
+#ifdef USE_ATOMIC_SYNC
+	sync.sync(nWorkers);
+#else
 	sync();
+#endif
 	io[(nGangs+g)*nWorkers+w] = cache[w];
 }
 
@@ -73,6 +121,9 @@ int main()
 #else
 			int cache[nWorkers];
 #endif
+#ifdef USE_ATOMIC_SYNC
+			Sync sync;
+#endif
 			// printf("%lld _ ( %lld )\n",g,nWorkers);
 			#pragma acc loop worker
 			// #pragma acc loop vector
@@ -95,12 +146,20 @@ int main()
 				// load a pseudo-random number of times to threads out of sync and thusly provoke race conditions
 				for(int r = 0; r < ((unsigned int)((w+i*nWorkers)*nGangs+g)*1103515245u)/(double)UINT_MAX*13+1; ++r)
 					cache[w] = io[(nGangs+g)*nWorkers+w];
+#ifdef USE_ATOMIC_SYNC
+				sync.sync(nWorkers);
+#else
 				sync();
+#endif
 				cache[(w+3)%nWorkers] += (w+3)%nWorkers+1;
 				// cache[(w+3)%nWorkers] += w+1;
 				// printf("%lld %lld : %lld\n",g,w, cache[(w+3)%nWorkers]);
 				// printf("");
+#ifdef USE_ATOMIC_SYNC
+				sync.sync(nWorkers);
+#else
 				sync();
+#endif
 				io[(nGangs+g)*nWorkers+w] = cache[w];
 #endif
 			}
