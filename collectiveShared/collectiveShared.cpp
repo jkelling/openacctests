@@ -3,46 +3,48 @@
 #include <climits>
 
 #define USE_INLINE
-// #define USE_ATOMIC_SYNC
+#define USE_ATOMIC_SYNC
 
-constexpr unsigned int N_GANGS = 2;
-#ifdef __PGIC__
 #ifdef USE_ATOMIC_SYNC
 struct Sync
 {
 	std::uint8_t m_generation = 0;
-	int m_syncCounter[2] {0,0};
+	short m_syncCounter[4] {0,0,0,0};
 
 	void sync(int workerNum)
 	{
-		const auto generationEntered = m_generation&1;
+		const auto slot = (m_generation&1)<<1;
 		int sum;
-		auto& cntr = m_syncCounter[generationEntered];
 		#pragma acc atomic capture
-			sum = ++cntr;
+		sum = ++m_syncCounter[slot];
 		if(sum == workerNum)
 		{
 			++m_generation;
+			const int nextSlot = (m_generation&1)<<1;
+			m_syncCounter[nextSlot] = 0;
+			m_syncCounter[nextSlot+1] = 0;
 			// op();
 		}
 		while(sum < workerNum)
 		{
 			#pragma acc atomic read
-			sum = m_syncCounter[generationEntered];
+			sum = m_syncCounter[slot];
 		}
-		#pragma acc atomic update
-		--m_syncCounter[generationEntered&1];
-		while(sum > 0)
+		#pragma acc atomic capture
+		sum = ++m_syncCounter[slot+1];
+		while(sum < workerNum)
 		{
 			#pragma acc atomic read
-			sum = m_syncCounter[generationEntered];
+			sum = m_syncCounter[slot+1];
 		}
 	}
 };
-#else
+#endif
+
+constexpr unsigned int N_GANGS = 2;
+#ifdef __PGIC__
 __attribute__((noinline))
 void sync() {} // dummy sync call
-#endif
 // #pragma acc routine(sync) bind("__syncthreads")
 constexpr unsigned int N_WORKERS = 1024;
 #else
