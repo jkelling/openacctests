@@ -9,16 +9,22 @@
 struct Sync
 {
 	std::uint8_t m_generation = 0;
-	short m_syncCounter[4] {0,0,0,0};
+	int m_syncCounter[4] {0,0,0,0};
 
 	void sync(int workerNum)
 	{
 		const auto slot = (m_generation&1)<<1;
 		int sum;
+		// printf("enter gen %lld oldsum=%lld\n", (unsigned long long)slot, (unsigned long long)sum);
 		#pragma acc atomic capture
-		sum = ++m_syncCounter[slot];
+		{
+			++m_syncCounter[slot];
+			sum = m_syncCounter[slot];
+		}
+		printf("enter gen %lld sum=%lld\n", (unsigned long long)slot, (unsigned long long)sum);
 		if(sum == workerNum)
 		{
+			printf("nextupdate at gen %lld\n", (unsigned long long)slot);
 			++m_generation;
 			const int nextSlot = (m_generation&1)<<1;
 			m_syncCounter[nextSlot] = 0;
@@ -31,17 +37,23 @@ struct Sync
 			sum = m_syncCounter[slot];
 		}
 		#pragma acc atomic capture
-		sum = ++m_syncCounter[slot+1];
+		{
+			++m_syncCounter[slot+1];
+			sum = m_syncCounter[slot+1];
+		}
 		while(sum < workerNum)
 		{
 			#pragma acc atomic read
 			sum = m_syncCounter[slot+1];
 		}
+#ifdef PRINT_ON_BARRIER_EXIT
+		printf("exit gen %lld sum=%lld\n", (unsigned long long)slot, (unsigned long long)sum);
+#endif
 	}
 };
 #endif
 
-constexpr unsigned int N_GANGS = 2;
+constexpr unsigned int N_GANGS = 1;
 #ifdef __PGIC__
 __attribute__((noinline))
 void sync() {} // dummy sync call
