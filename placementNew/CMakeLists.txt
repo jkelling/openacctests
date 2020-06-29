@@ -1,0 +1,2 @@
+add_executable(placementNew placementNew.cpp)
+target_link_libraries(placementNew)
