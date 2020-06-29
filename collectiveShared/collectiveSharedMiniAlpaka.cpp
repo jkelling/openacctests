@@ -2,6 +2,7 @@
 #include <vector>
 #include <climits>
 #include <cassert>
+#include <memory>
 
 #define USE_TUPLE
 #ifdef USE_TUPLE
@@ -26,10 +27,10 @@ struct AccGeneric
 	unsigned int nGangs, nWorkers;
 	unsigned int g, w;
 
-	Shared &shared;
+	Shared *shared;
 
 		AccGeneric(unsigned int nGangs, unsigned int nWorkers
-				, unsigned int g, unsigned int w, Shared shared)
+				, unsigned int g, unsigned int w, Shared *shared)
 		: nGangs(nGangs), nWorkers(nWorkers), g(g), w(w), shared(shared)
 	{}
 
@@ -78,30 +79,13 @@ struct AccOpenACCNoT
 	void __syncthreads() const {syncOpenACC();}
 };
 
-// template<typename Acc, typename Funct, typename ...Args>
-// void execKernelOpenACCInner(Funct &&funct, unsigned int nGangs, unsigned int nWorkers, const std::tuple<Args...>& targs);
-template<typename Acc, typename Funct, typename Tuple>
-void execKernelOpenACCInner(Funct &&funct, unsigned int nGangs, unsigned int nWorkers, const Tuple& targs);
-
-template<typename Funct, typename ...Args>
-void execKernelOpenACC(Funct &&funct, unsigned int nGangs, unsigned int nWorkers, Args ...args)
+template<typename Acc, typename Funct, typename ...Args>
+void execKernelOpenACCInner(const Funct &pfunct, unsigned int pnGangs, unsigned int pnWorkers, Args ...args)
 {
 #ifdef USE_TUPLE
-#if defined(DO_APPLY_FUNC_OBJ)
-	auto targs = std::make_tuple(args...);
-#elif defined(INCLUDE_FUNCT_IN_TUPLE)
-	auto targs = std::make_tuple(funct, args...);
-#else
-	auto targs = std::make_tuple(args...);
+	const std::tuple<std::decay_t<Args>...> targs(std::forward<Args>(args)...);
 #endif
-#endif
-	execKernelOpenACCInner<AccOpenACC<typename Funct::Shared>>(funct, nGangs, nWorkers, targs);
-}
-
-template<typename Acc, typename Funct, typename Tuple>
-void execKernelOpenACCInner(Funct &&funct, unsigned int pnGangs, unsigned int pnWorkers, const Tuple& targs)
-{
-	const auto dtargs = targs;
+	const auto funct = pfunct;
 	const auto nGangs = pnGangs;
 	const auto nWorkers = pnWorkers;
 	#pragma acc parallel num_gangs(nGangs) num_workers(nWorkers)
@@ -111,7 +95,7 @@ void execKernelOpenACCInner(Funct &&funct, unsigned int pnGangs, unsigned int pn
 		{
 			typename std::decay<Funct>::type::Shared shared;
 			// AccOpenACC<typename Funct::Shared> acc(nGangs, nWorkers, g, 0);
-			Acc acc(nGangs, nWorkers, g, 0, shared);
+			Acc acc(nGangs, nWorkers, g, 0, &shared);
 			// printf("%lld _ ( %lld )\n",g,nWorkers);
 			#pragma acc loop worker
 			for(int w = 0; w < nWorkers; ++w)
@@ -119,26 +103,22 @@ void execKernelOpenACCInner(Funct &&funct, unsigned int pnGangs, unsigned int pn
 				auto wacc = acc;
 				wacc.w = w;
 #ifdef USE_TUPLE
-#if defined(DO_APPLY_FUNC_OBJ)
-				auto tup = std::make_tuple(funct, wacc);
-				// auto tup = std::tuple_cat(std::make_tuple(funct, wacc), targs);
-				// std::apply(invokeKernel<Funct, AccOpenACC<typename Funct::Shared>, Args...>
-				// 	, std::tuple_cat(std::make_tuple(funct, wacc), targs));
-#else
-				std::apply([&wacc, funct](auto &&...args)
-				// std::apply([](auto &&funct, auto &&...args)
-				// std::apply([&wacc, funct](int* io, int i)
+				std::apply([&wacc, funct](typename std::decay<Args>::type const & ... args)
 					{
 						funct(wacc, args...);
-						// funct(wacc, io, i);
-					}, dtargs);
-#endif
+					}, targs);
 #else
 				funct(wacc, std::forward<Args>(args)...);
 #endif
 			}
 		}
 	}
+}
+
+template<typename Funct, typename ...Args>
+void execKernelOpenACC(const Funct &funct, unsigned int nGangs, unsigned int nWorkers, Args ...args)
+{
+	execKernelOpenACCInner<AccOpenACC<typename Funct::Shared>>(funct, nGangs, nWorkers, std::forward<Args>(args)...);
 }
 
 // using OpenACC "backend"
@@ -150,6 +130,79 @@ void exec(Args ...args)
 
 // #define DEV_FUNCT _Pragma ("acc routine") \ // does not work
 // 	inline
+#define DEV_FUNCT inline
+
+#elif defined _OPENMP
+
+#include <omp.h>
+
+constexpr unsigned int N_GANGS = 2;
+constexpr unsigned int N_WORKERS = 128;
+
+template<typename Shared>
+struct AccOpenMP : public AccGeneric<Shared>
+{
+	using AccGeneric<Shared>::AccGeneric;
+	void __syncthreads() const {
+#pragma omp barrier
+	}
+};
+
+template<typename Acc, typename Funct, typename ...Args>
+void execKernelOpenMPInner(const Funct &pfunct, unsigned int pnGangs, unsigned int pnWorkers, Args ...args)
+{
+#ifdef USE_TUPLE
+	const std::tuple<std::decay_t<Args>...> targs(std::forward<Args>(args)...);
+#endif
+	const auto funct = pfunct;
+	const auto nGangs = pnGangs;
+	const auto nWorkers = pnWorkers;
+	#pragma omp target
+	{
+		#pragma omp teams num_teams(nGangs) thread_limit(nWorkers)
+		{
+			#pragma omp distribute
+			for(unsigned int g = 0; g < nGangs; ++g)
+			{
+				// auto shared = std::make_unique<typename std::decay<Funct>::type::Shared>();
+				// Acc acc(nGangs, nWorkers, g, 0, &*shared);
+				typename std::decay<Funct>::type::Shared shared;
+				Acc acc(nGangs, nWorkers, g, 0, &shared);
+				// printf("%lld _ ( %lld )\n",g,nWorkers);
+				#pragma omp parallel num_threads(nWorkers)
+				{
+					auto wacc = acc;
+					wacc.w = omp_get_thread_num();
+					// printf("OMP num threads=%d:%d, %d:%d\n", ::omp_get_num_threads(), nWorkers, omp_get_thread_num(), wacc.w);
+#if 1
+#ifdef USE_TUPLE
+					std::apply([&wacc, funct](typename std::decay<Args>::type const & ... args)
+						{
+							funct(wacc, args...);
+						}, targs);
+#else
+					funct(wacc, std::forward<Args>(args)...);
+#endif
+#endif
+				}
+			}
+		}
+	}
+}
+
+template<typename Funct, typename ...Args>
+void execKernelOpenMP(const Funct &funct, unsigned int nGangs, unsigned int nWorkers, Args ...args)
+{
+	execKernelOpenMPInner<AccOpenMP<typename Funct::Shared>>(funct, nGangs, nWorkers, std::forward<Args>(args)...);
+}
+
+// using OpenACC "backend"
+template<typename ...Args>
+void exec(Args ...args)
+{
+	execKernelOpenMP(std::forward<Args>(args)...);
+}
+
 #define DEV_FUNCT inline
 
 #else
@@ -193,28 +246,25 @@ struct Funct
 #if 1
 	template<typename Acc>
 	DEV_FUNCT
-	void operator() (Acc& acc, int* io, int i) const
+	void operator() (const Acc& acc, int* io, int i) const
 	{
-		auto& nGangs = acc.nGangs;
-		auto& nWorkers = acc.nWorkers;
-		assert(nWorkers <= MaxWorkers);
-		auto& g = acc.g;
-		auto& w = acc.w;
-		auto& cache = acc.shared.cache;
+		const auto& nGangs = acc.nGangs;
+		const auto& nWorkers = acc.nWorkers;
+		const auto& g = acc.g;
+		const auto& w = acc.w;
+		auto& cache = acc.shared->cache;
 
 		// printf("%lld %lld ( %lld )\n",g,w, (int)nWorkers);
 		/* data-parallel */
-		io[g*nWorkers+w] += w+1;
+		io[g*nWorkers+w] += 10000 + w;
 
 		/* collective load/store */
 		// load a pseudo-random number of times to threads out of sync and thusly provoke race conditions
 		for(int r = 0; r < ((unsigned int)((w+i*nWorkers)*nGangs+g)*1103515245u)/(double)UINT_MAX*13+1; ++r)
 			cache[w] = io[(nGangs+g)*nWorkers+w];
 		acc.__syncthreads();
-		cache[(w+3)%nWorkers] += (w+3)%nWorkers+1;
-		// cache[(w+3)%nWorkers] += w+1;
-		// printf("%lld %lld : %lld\n",g,w, cache[(w+3)%nWorkers]);
-		// printf("");
+		constexpr int shift = 3;
+		cache[(w+shift)%nWorkers] += 10000+(w+shift)%nWorkers;
 		acc.__syncthreads();
 		io[(nGangs+g)*nWorkers+w] = cache[w];
 	}
@@ -238,14 +288,23 @@ int main()
 	{
 		exec(Funct<>(), nGangs, nWorkers, (int*)acc_deviceptr(io), i);
 	}
+#elif defined _OPENMP
+	int* dio = (int*)omp_target_alloc(sizeof(io), 0);
+	omp_target_memcpy(dio, io, sizeof(io), 0,0,0, omp_get_initial_device());
+	for (int i = 0; i < 1; ++i)
+	{
+		exec(Funct<>(), nGangs, nWorkers, dio, i);
+	}
+	omp_target_memcpy(io, dio, sizeof(io), 0,0,omp_get_initial_device(),0);
 #else
-	for (int i = 0; i < 1000; ++i)
+	for (int i = 0; i < 1; ++i)
 	{
 		exec(Funct<>(), nGangs, nWorkers, io, i);
 	}
 #endif
 
 	int a = 0;
+	printf("BEGIN\n");
 	for(int g = 0; g < nGangs; ++g)
 	{
 		for(int w = 0; w < nWorkers; ++w)
@@ -255,6 +314,7 @@ int main()
 		printf("\n");
 	}
 	a = 1;
+	fprintf(stderr, "BEGIN\n");
 	for(int g = 0; g < nGangs; ++g)
 	{
 		for(int w = 0; w < nWorkers; ++w)
