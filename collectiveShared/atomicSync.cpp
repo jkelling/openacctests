@@ -4,18 +4,25 @@
 
 #include <omp.h>
 
+#ifndef N_GANGS
 constexpr unsigned int N_GANGS = 1;
+#endif
 struct Sync
 {
 	int m_generation = 0;
-	short m_syncCounter[4] {0,0,0,0};
+	int m_syncCounter[4] {0,0,0,0};
 
 	void sync(int workerNum)
 	{
 		const auto slot = (m_generation&1)<<1;
 		int sum;
+		// auto* syncCounter = m_syncCounter;
 		#pragma omp atomic capture
-		sum = ++m_syncCounter[slot];
+		#pragma acc atomic capture
+		{
+			++m_syncCounter[slot];
+			sum = m_syncCounter[slot];
+		}
 		// printf("thread %d reached barrier sum=%d\n", omp_get_thread_num(), sum);
 		if(sum == workerNum)
 		{
@@ -28,21 +35,29 @@ struct Sync
 		while(sum < workerNum)
 		{
 			#pragma omp atomic read
+			#pragma acc atomic read
 			sum = m_syncCounter[slot];
 			// printf("thread %d waiting sum=%d\n", omp_get_thread_num(), sum);
 		}
 		// printf("thread %d woke up at barrier sum=%d\n", omp_get_thread_num(), sum);
 		#pragma omp atomic capture
-		sum = ++m_syncCounter[slot+1];
+		#pragma acc atomic capture
+		{
+			++m_syncCounter[slot+1];
+			sum = m_syncCounter[slot+1];
+		}
 		while(sum < workerNum)
 		{
+			#pragma acc atomic read
 			#pragma omp atomic read
 			sum = m_syncCounter[slot+1];
 		}
 		// printf("thread %d departed barrier sum=%d nextgen=%d\n", omp_get_thread_num(), sum, m_generation);
 	}
 };
+#ifndef N_WORKERS
 constexpr unsigned int N_WORKERS = 8;
+#endif
 
 int main()
 {
@@ -55,38 +70,48 @@ int main()
 		io[a] = 1000000000;
 
 	int i = 1;
-	int cache[nWorkers];
-#ifdef USE_ATOMIC_SYNC
-	Sync sync;
-#endif
 	// printf("%lld _ ( %lld )\n",g,nWorkers);
-	int g = 0;
-	#pragma omp parallel for
-	for(size_t w = 0; w < nWorkers; ++w)
+	#pragma acc data copy(io)
+	#pragma acc parallel num_gangs(nGangs) num_workers(nWorkers)
 	{
-		printf("%d %d %d\n", g, w, omp_get_thread_num());
-		/* data-parallel */
-		io[g*nWorkers+w] += w+1;
+		#pragma acc loop gang
+		for(uint32_t g = 0; g < nGangs; ++g)
+		{
+#ifdef USE_ATOMIC_SYNC
+			Sync sync;
+#endif
+			int cache[nWorkers];
+			#pragma omp parallel for
+			#pragma acc loop worker
+			for(uint32_t w = 0; w < nWorkers; ++w)
+			{
+#ifdef __OPENMP
+				printf("%d %d %d\n", g, w, omp_get_thread_num());
+#endif
+				/* data-parallel */
+				io[g*nWorkers+w] += w+1;
 
-		/* collective load/store */
-		// load a pseudo-random number of times to threads out of sync and thusly provoke race conditions
-		for(int r = 0; r < ((unsigned int)((w+i*nWorkers)*nGangs+g)*1103515245u)/(double)UINT_MAX*13+1; ++r)
-			cache[w] = io[(nGangs+g)*nWorkers+w];
+				/* collective load/store */
+				// load a pseudo-random number of times to threads out of sync and thusly provoke race conditions
+				for(int r = 0; r < ((unsigned int)((w+i*nWorkers)*nGangs+g)*1103515245u)/(double)UINT_MAX*13+1; ++r)
+					cache[w] = io[(nGangs+g)*nWorkers+w];
 #ifdef USE_ATOMIC_SYNC
-		sync.sync(nWorkers);
-#else
+				sync.sync(nWorkers);
+#elif defined USE_BARRIER
 #pragma omp barrier
 #endif
-		cache[(w+3)%nWorkers] += (w+3)%nWorkers+1;
-		// cache[(w+3)%nWorkers] += w+1;
-		// printf("%lld %lld : %lld\n",g,w, cache[(w+3)%nWorkers]);
-		// printf("");
+				cache[(w+3)%nWorkers] += (w+3)%nWorkers+1;
+				// cache[(w+3)%nWorkers] += w+1;
+				// printf("%lld %lld : %lld\n",g,w, cache[(w+3)%nWorkers]);
+				// printf("");
 #ifdef USE_ATOMIC_SYNC
-		sync.sync(nWorkers);
-#else
+				sync.sync(nWorkers);
+#elif defined USE_BARRIER
 #pragma omp barrier
 #endif
-		io[(nGangs+g)*nWorkers+w] = cache[w];
+				io[(nGangs+g)*nWorkers+w] = cache[w];
+			}
+		}
 	}
 
 	int a = 0;
