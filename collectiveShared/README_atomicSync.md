@@ -63,9 +63,8 @@ The second block shows the initial values of the `io` array because threads
 do no wait before reading each other's results and may use their own read
 values.
 
-Note, that on GPU, the results will look correct within warps, because threads
-run in lock-step. Errors will only be visible at warp boundaries (each thread
-sends data to a neighbor 3 away).
+Note, that on GPU, the results tend look correct even without barrier, maybe due
+to how warps are scheduled.
 
 ### `-DUSE_BARRIER`
 

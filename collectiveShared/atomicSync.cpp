@@ -100,7 +100,8 @@ int main()
 #elif defined USE_BARRIER
 #pragma omp barrier
 #endif
-				cache[(w+3)%nWorkers] += (w+3)%nWorkers+1;
+				const uint32_t neighbor = (w+nWorkers/2)%nWorkers;
+				cache[neighbor] += neighbor+1;
 				// cache[(w+3)%nWorkers] += w+1;
 				// printf("%lld %lld : %lld\n",g,w, cache[(w+3)%nWorkers]);
 				// printf("");
