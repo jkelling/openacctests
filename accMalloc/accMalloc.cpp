@@ -47,9 +47,17 @@ int main()
 	 * <.y0001>, flags=1792, async=-1, devid=1) at ../../src/dataonb.c:388
 	 *#4  0x0000000000401554 in main () at test.cpp:9
 	 */
+#elif defined CAST
+	std::size_t gh = reinterpret_cast<std::size_t>(g);
+#    pragma acc parallel loop vector copyin(gh) default(present)
 #else
-#    error "define one of COPYIN_DEFPRESENT, ALL_IMPLICIT, ONLY_DEFPRESENT"
+#    error "define one of COPYIN_DEFPRESENT, ALL_IMPLICIT, ONLY_DEFPRESENT, CAST"
 #endif
 	for(std::size_t a = 0; a < 2; ++a)
+	{
+#ifdef CAST
+		std::uint32_t* g = reinterpret_cast<std::uint32_t*>(gh);
+#endif
 		g[a] = 0u;
+	}
 }
