@@ -72,9 +72,13 @@ int main()
 	 * flags=1792, async=-1, devid=1) at ../../src/dataonb.c:388
 	 *#4  0x0000000000401554 in main () at accMalloc.cpp:10
 	 */
+#elif defined DEFPRESENT_DEVPTR
+#    pragma acc parallel loop vector default(present) deviceptr(g)
+	// ok
 #elif defined CAST
 	std::size_t gh = reinterpret_cast<std::size_t>(g);
 #    pragma acc parallel loop vector copyin(gh) default(present)
+	// ok
 #else
 #    error "define one of COPYIN_DEFPRESENT, ALL_IMPLICIT, ONLY_DEFPRESENT, CAST"
 #endif
