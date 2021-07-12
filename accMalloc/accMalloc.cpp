@@ -47,6 +47,31 @@ int main()
 	 * <.y0001>, flags=1792, async=-1, devid=1) at ../../src/dataonb.c:388
 	 *#4  0x0000000000401554 in main () at test.cpp:9
 	 */
+#elif defined COPYIN_DEFPRESENT_DEVPTR
+#    pragma acc parallel loop vector copyin(g) default(present) deviceptr(g)
+	/* SIGSEGV: in runtime copyin
+	 *#0  0x00007ffff7633a7f in __pgi_uacc_cuda_dataup1 (devptr=81672905216,
+	 * pbufinfo=0x7fffffffb960, hostptr=0x130415a000, offset=0, size=1,
+	 * stride=1, elementsize=4, lineno=10, name=0x4018f0 <.S06062> "g",
+	 * flags=1792, async=-1, dindex=1) at ../../src/cuda_dataup1.c:102
+	 *#1  0x00007ffff7ba4bc4 in __pgi_uacc_dataup1 (devptr=81672905216,
+	 * pbufinfo=0x7fffffffb960, hostptr=0x130415a000, offset=0, size=1,
+	 * stride=1, elementsize=4, lineno=10, name=0x4018f0 <.S06062> "g",
+	 * flags=1792, async=-1, devid=1) at ../../src/dataup1.c:50
+	 *#2  0x00007ffff7ba526e in __pgi_uacc_dataupx (devptr=81672905216,
+	 * pbufinfo=0x7fffffffb960, hostptr=0x130415a000, poffset=0, dims=1,
+	 * desc=0x7fffffffba70, elementsize=4, lineno=10, name=0x4018f0 <.S06062>
+	 * "g", flags=1792, async=-1, devid=1) at ../../src/dataupx.c:127
+	 *#3  0x00007ffff7ba3a05 in __pgi_uacc_dataonb (filename=0x401880
+	 * <.F0003.6037>
+	 * "/home/kelling/checkout/openacctests/accMalloc/accMalloc.cpp",
+	 * funcname=0x4018c0 <.F0004.6039> "main", pdevptr=0x7fffffffba48,
+	 * hostptr=0x130415a000, hostptrptr=0x7fffffffba58, poffset=0, dims=1,
+	 * desc=0x7fffffffba70, elementsize=4, hostdescptr=0x0, hostdescsize=0,
+	 * lineno=10, name=0x4018f0 <.S06062> "g", pdtype=0x603ff0 <.y0001>,
+	 * flags=1792, async=-1, devid=1) at ../../src/dataonb.c:388
+	 *#4  0x0000000000401554 in main () at accMalloc.cpp:10
+	 */
 #elif defined CAST
 	std::size_t gh = reinterpret_cast<std::size_t>(g);
 #    pragma acc parallel loop vector copyin(gh) default(present)
